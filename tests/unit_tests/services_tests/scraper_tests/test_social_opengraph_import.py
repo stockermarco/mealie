@@ -1,19 +1,22 @@
 import json
+from html import escape
 from types import SimpleNamespace
 
 import pytest
 
 from mealie.lang.providers import get_locale_provider
+from mealie.schema.openai.general import OpenAIText
 from mealie.schema.recipe.recipe import Recipe
 from mealie.schema.recipe.recipe_ingredient import RecipeIngredient
 from mealie.schema.recipe.recipe_step import RecipeStep
+from mealie.services.openai import OpenAIService
 from mealie.services.scraper.recipe_scraper import RecipeScraper
 from mealie.services.scraper.scraped_extras import ScrapedExtras
 from mealie.services.scraper.scraper_strategies import (
-    ABCScraperStrategy,
     MAX_OPEN_GRAPH_TEXT_LENGTH,
     OPEN_GRAPH_PLACEHOLDER_INGREDIENT,
     OPEN_GRAPH_PLACEHOLDER_INSTRUCTION,
+    ABCScraperStrategy,
     RecipeScraperOpenAI,
     RecipeScraperOpenGraph,
     RecipeScraperPackage,
@@ -43,9 +46,9 @@ def social_html(title: str, description: str, image: str = "https://cdn.example.
     return f"""
     <html>
       <head>
-        <meta property="og:title" content="{title}">
-        <meta property="og:description" content="{description}">
-        <meta property="og:image" content="{image}">
+        <meta property="og:title" content="{escape(title, quote=True)}">
+        <meta property="og:description" content="{escape(description, quote=True)}">
+        <meta property="og:image" content="{escape(image, quote=True)}">
       </head>
       <body>Instagram</body>
     </html>
@@ -92,9 +95,11 @@ class CapturingOpenAIScraper(RecipeScraperOpenAI):
 
 
 def test_openai_input_includes_opengraph_caption_without_tracking_params():
+    signed_image_url = "https://cdn.example.com/recipe.jpg?Expires=123&Signature=abc&Key-Pair-Id=key"
     html = social_html(
         "cookwithmaria on Instagram: Cremige Tomatenpasta",
         "Zutaten: 250 g Pasta, 2 Tomaten. Schritte: Pasta kochen. Sauce ruehren.",
+        image=signed_image_url,
     )
     strategy = scraper(
         RecipeScraperOpenAI,
@@ -109,9 +114,23 @@ def test_openai_input_includes_opengraph_caption_without_tracking_params():
     assert "Visible page text:" in message
     assert "Zutaten: 250 g Pasta" in message
     assert "Pasta kochen" in message
+    assert "Source URL:\nhttps://www.instagram.com/reel/abc123/" in message
     assert "utm_source" not in message
     assert "igsh" not in message
-    assert "Recipe Image: https://cdn.example.com/recipe.jpg" in message
+    assert f"Recipe Image: {signed_image_url}" in message
+
+
+def test_openai_input_handles_caption_special_characters():
+    caption = 'Zutaten:\n- 2 Äpfel & "Rahm" 🥣\nSchritte: rühren, backen.\n#dessert'
+    html = social_html('Müllers "Apfelküchlein" & mehr', caption)
+    strategy = scraper(RecipeScraperOpenAI, "https://instagram.com/reel/abc123/", html)
+
+    message = strategy.format_html_to_text(html)
+
+    assert 'Müllers "Apfelküchlein" & mehr' in message
+    assert '2 Äpfel & "Rahm" 🥣' in message
+    assert "Schritte: rühren, backen." in message
+    assert "#dessert" in message
 
 
 def test_opengraph_caption_is_length_limited():
@@ -157,6 +176,55 @@ async def test_caption_only_reel_can_fall_through_to_web_ai_after_transcription_
 
 
 @pytest.mark.asyncio
+async def test_social_opengraph_caption_becomes_structured_recipe(monkeypatch: pytest.MonkeyPatch):
+    html = social_html(
+        "cookwithmaria on Instagram: Cremige Tomatenpasta",
+        "Cremige Tomatenpasta. Zutaten: 250 g Pasta, 2 Tomaten. Schritte: Pasta kochen. Sauce ruehren.",
+        image="https://cdn.example.com/recipe.jpg?Expires=123&Signature=abc",
+    )
+    recipe_url = "https://www.instagram.com/reel/abc123/?utm_source=ig_web_copy_link&igsh=tracking"
+    captured = {}
+
+    async def mock_get_response(self, prompt, message, *args, **kwargs) -> OpenAIText:
+        captured["prompt"] = prompt
+        captured["message"] = message
+        captured["schema"] = kwargs.get("response_schema")
+        return OpenAIText(
+            text=json.dumps(
+                {
+                    "@context": "https://schema.org",
+                    "@type": "Recipe",
+                    "name": "Cremige Tomatenpasta",
+                    "description": "Schnelle Tomatenpasta aus der Reel-Caption.",
+                    "recipeIngredient": ["250 g Pasta", "2 Tomaten"],
+                    "recipeInstructions": [
+                        {"@type": "HowToStep", "text": "Pasta kochen."},
+                        {"@type": "HowToStep", "text": "Sauce ruehren."},
+                    ],
+                }
+            )
+        )
+
+    monkeypatch.setattr(OpenAIService, "__init__", lambda self, repos: None)
+    monkeypatch.setattr(OpenAIService, "get_prompt", lambda self, name: f"prompt:{name}")
+    monkeypatch.setattr(OpenAIService, "get_response", mock_get_response)
+
+    recipe, _ = await scraper(RecipeScraperOpenAI, recipe_url, html).parse()
+
+    assert captured["prompt"] == "prompt:recipes.scrape-recipe"
+    assert captured["schema"] is OpenAIText
+    assert "OpenGraph title:" in captured["message"]
+    assert "OpenGraph description:" in captured["message"]
+    assert "utm_source" not in captured["message"]
+    assert "igsh" not in captured["message"]
+    assert recipe.name == "Cremige Tomatenpasta"
+    assert recipe.description == "Schnelle Tomatenpasta aus der Reel-Caption."
+    assert [ingredient.note for ingredient in recipe.recipe_ingredient] == ["250 g Pasta", "2 Tomaten"]
+    assert [step.text for step in recipe.recipe_instructions] == ["Pasta kochen.", "Sauce ruehren."]
+    assert recipe.org_url == recipe_url
+
+
+@pytest.mark.asyncio
 async def test_social_opengraph_fallback_is_blocked_when_ai_is_enabled():
     strategy = scraper(
         RecipeScraperOpenGraph,
@@ -184,6 +252,43 @@ async def test_social_opengraph_fallback_is_preserved_when_ai_is_disabled():
     assert recipe.name.startswith("cookwithmaria on Instagram")
     assert recipe.recipe_ingredient[0].note == OPEN_GRAPH_PLACEHOLDER_INGREDIENT
     assert recipe.recipe_instructions[0].text == OPEN_GRAPH_PLACEHOLDER_INSTRUCTION
+
+
+@pytest.mark.asyncio
+async def test_non_social_opengraph_fallback_is_preserved_when_ai_is_enabled():
+    strategy = scraper(
+        RecipeScraperOpenGraph,
+        "https://example.com/post",
+        social_html("Example: Caption", "Caption without structured recipe data"),
+        ai_enabled=True,
+    )
+
+    recipe, _ = await strategy.parse()
+
+    assert recipe.name == "Example: Caption"
+    assert recipe.recipe_ingredient[0].note == OPEN_GRAPH_PLACEHOLDER_INGREDIENT
+    assert recipe.recipe_instructions[0].text == OPEN_GRAPH_PLACEHOLDER_INSTRUCTION
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://www.instagram.com/reel/abc123/",
+        "https://instagram.com/reel/abc123/",
+        "https://m.facebook.com/watch/?v=abc123",
+        "https://vm.tiktok.com/abc123/",
+        "https://youtube.com/watch?v=abc123",
+        "https://youtu.be/abc123",
+        "https://pin.it/abc123",
+    ],
+)
+def test_social_media_host_detection(url: str):
+    assert RecipeScraperOpenAI.is_social_media_url(url)
+
+
+@pytest.mark.parametrize("url", ["https://notinstagram.com/reel/abc123/", "https://example.com/recipe"])
+def test_social_media_host_detection_rejects_non_social_hosts(url: str):
+    assert not RecipeScraperOpenAI.is_social_media_url(url)
 
 
 def test_social_ai_recipe_must_not_have_placeholder_or_caption_title():

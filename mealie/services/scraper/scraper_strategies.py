@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, TypedDict
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import bs4
 import extruct
@@ -39,6 +39,7 @@ MAX_OPEN_GRAPH_TEXT_LENGTH = 8000
 MAX_VISIBLE_TEXT_LENGTH = 20000
 OPEN_GRAPH_PLACEHOLDER_INGREDIENT = "Could not detect ingredients"
 OPEN_GRAPH_PLACEHOLDER_INSTRUCTION = "Could not detect instructions"
+TRACKING_QUERY_PARAMS = {"fbclid", "gclid", "igsh", "igshid", "mc_cid", "mc_eid", "mibextid"}
 SOCIAL_MEDIA_HOSTS = {
     "facebook.com",
     "fb.watch",
@@ -394,6 +395,11 @@ class RecipeScraperOpenAI(RecipeScraperPackage):
         return "\n\n".join(data_parts)
 
     @staticmethod
+    def is_tracking_query_param(name: str) -> bool:
+        lower_name = name.lower()
+        return lower_name.startswith("utm_") or lower_name in TRACKING_QUERY_PARAMS
+
+    @staticmethod
     def strip_url_tracking(url: str | None) -> str | None:
         if not url:
             return None
@@ -402,7 +408,12 @@ class RecipeScraperOpenAI(RecipeScraperPackage):
         if not parsed.scheme or not parsed.netloc:
             return url
 
-        return urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", "", ""))
+        query_params = [
+            (key, value)
+            for key, value in parse_qsl(parsed.query, keep_blank_values=True)
+            if not RecipeScraperOpenAI.is_tracking_query_param(key)
+        ]
+        return urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", urlencode(query_params), ""))
 
     @staticmethod
     def truncate_text(text: str, max_length: int) -> str:
@@ -484,7 +495,7 @@ class RecipeScraperOpenAI(RecipeScraperPackage):
         joined_sections = "\n\n".join(context_sections + sections)
         components = [f"Convert this content to JSON:\n{joined_sections}"]
         if image:
-            components.append(f"Recipe Image: {self.strip_url_tracking(image)}")
+            components.append(f"Recipe Image: {image}")
         return "\n".join(components)
 
     @staticmethod
