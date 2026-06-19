@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, TypedDict
+from urllib.parse import urlparse, urlunparse
 
 import bs4
 import extruct
@@ -34,6 +35,20 @@ from mealie.services.scraper.scraped_extras import ScrapedExtras
 from . import cleaner
 
 SCRAPER_TIMEOUT = 15
+MAX_OPEN_GRAPH_TEXT_LENGTH = 8000
+MAX_VISIBLE_TEXT_LENGTH = 20000
+OPEN_GRAPH_PLACEHOLDER_INGREDIENT = "Could not detect ingredients"
+OPEN_GRAPH_PLACEHOLDER_INSTRUCTION = "Could not detect instructions"
+SOCIAL_MEDIA_HOSTS = {
+    "facebook.com",
+    "fb.watch",
+    "instagram.com",
+    "pin.it",
+    "pinterest.com",
+    "tiktok.com",
+    "youtu.be",
+    "youtube.com",
+}
 
 BROWSER_IMPERSONATIONS = [
     "chrome",
@@ -153,6 +168,23 @@ class ABCScraperStrategy(ABC):
         self.raw_html = raw_html
         self.translator = translator
         self.repos = repos
+
+    @staticmethod
+    def _host_matches(hostname: str, domain: str) -> bool:
+        return hostname == domain or hostname.endswith(f".{domain}")
+
+    @classmethod
+    def is_social_media_url(cls, url: str) -> bool:
+        hostname = urlparse(url).hostname or ""
+        hostname = hostname.lower().removeprefix("www.")
+        return any(cls._host_matches(hostname, domain) for domain in SOCIAL_MEDIA_HOSTS)
+
+    def ai_enabled(self) -> bool:
+        if not self.repos:
+            return False
+
+        settings = self.repos.group_ai_provider_settings.get_one(self.repos.group_id)
+        return bool(settings and settings.ai_enabled)
 
     @abstractmethod
     def can_scrape(self) -> bool: ...
@@ -361,6 +393,35 @@ class RecipeScraperOpenAI(RecipeScraperPackage):
 
         return "\n\n".join(data_parts)
 
+    @staticmethod
+    def strip_url_tracking(url: str | None) -> str | None:
+        if not url:
+            return None
+
+        parsed = urlparse(url)
+        if not parsed.scheme or not parsed.netloc:
+            return url
+
+        return urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", "", ""))
+
+    @staticmethod
+    def truncate_text(text: str, max_length: int) -> str:
+        return text if len(text) <= max_length else text[:max_length].rstrip()
+
+    @staticmethod
+    def meta_content(soup: bs4.BeautifulSoup, property_name: str) -> str:
+        tag = soup.find("meta", property=property_name)
+        content = tag.get("content") if tag else ""
+        return content.strip() if isinstance(content, str) else ""
+
+    def append_section(self, sections: list[str], title: str, content: str | None, max_length: int) -> None:
+        if not content:
+            return
+
+        content = self.truncate_text(content.strip(), max_length)
+        if content and not any(section.endswith(f"\n{content}") for section in sections):
+            sections.append(f"{title}:\n{content}")
+
     def find_image(self, soup: bs4.BeautifulSoup) -> str | None:
         # find the open graph image tag
         og_image = soup.find("meta", property="og:image")
@@ -392,20 +453,63 @@ class RecipeScraperOpenAI(RecipeScraperPackage):
     def format_html_to_text(self, html: str) -> str:
         soup = bs4.BeautifulSoup(html, "lxml")
 
+        context_sections: list[str] = []
+        parsed_url = urlparse(self.strip_url_tracking(self.url) or "")
+        if parsed_url.netloc:
+            self.append_section(context_sections, "Source URL", urlunparse(parsed_url), MAX_OPEN_GRAPH_TEXT_LENGTH)
+            self.append_section(context_sections, "Source host", parsed_url.netloc, MAX_OPEN_GRAPH_TEXT_LENGTH)
+
+        sections: list[str] = []
+        self.append_section(
+            sections, "OpenGraph title", self.meta_content(soup, "og:title"), MAX_OPEN_GRAPH_TEXT_LENGTH
+        )
+        self.append_section(
+            sections, "OpenGraph description", self.meta_content(soup, "og:description"), MAX_OPEN_GRAPH_TEXT_LENGTH
+        )
+
         text = soup.get_text(separator="\n", strip=True)
-        text += self.extract_json_ld_data_from_html(soup)
-        if not text:
-            raise Exception("No text or ld+json data found in HTML")
+        self.append_section(sections, "Visible page text", text, MAX_VISIBLE_TEXT_LENGTH)
+
+        json_ld = self.extract_json_ld_data_from_html(soup)
+        self.append_section(sections, "JSON-LD", json_ld, MAX_VISIBLE_TEXT_LENGTH)
+
+        if not sections:
+            raise Exception("No text, metadata, or ld+json data found in HTML")
 
         try:
             image = self.find_image(soup)
         except Exception:
             image = None
 
-        components = [f"Convert this content to JSON: {text}"]
+        joined_sections = "\n\n".join(context_sections + sections)
+        components = [f"Convert this content to JSON:\n{joined_sections}"]
         if image:
-            components.append(f"Recipe Image: {image}")
+            components.append(f"Recipe Image: {self.strip_url_tracking(image)}")
         return "\n".join(components)
+
+    @staticmethod
+    def has_placeholder_values(recipe: Recipe) -> bool:
+        ingredients = recipe.recipe_ingredient or []
+        instructions = recipe.recipe_instructions or []
+        ingredient_text = "\n".join((ingredient.note or "") for ingredient in ingredients)
+        instruction_text = "\n".join((instruction.text or "") for instruction in instructions)
+        return (
+            OPEN_GRAPH_PLACEHOLDER_INGREDIENT in ingredient_text
+            or OPEN_GRAPH_PLACEHOLDER_INSTRUCTION in instruction_text
+        )
+
+    def is_usable_social_ai_recipe(self, recipe: Recipe) -> bool:
+        name = (recipe.name or "").strip()
+        if not name or len(name) > 80:
+            return False
+
+        lowered_name = name.lower()
+        if "on instagram" in lowered_name or "ingredients:" in lowered_name or "zutaten:" in lowered_name:
+            return False
+
+        ingredients = [ingredient for ingredient in recipe.recipe_ingredient or [] if ingredient.note]
+        instructions = [instruction for instruction in recipe.recipe_instructions or [] if instruction.text]
+        return bool(ingredients and instructions and not self.has_placeholder_values(recipe))
 
     async def get_html(self, url: str) -> str:
         service = OpenAIService(self.repos)
@@ -427,7 +531,15 @@ class RecipeScraperOpenAI(RecipeScraperPackage):
         if on_progress:
             await on_progress(self.translator.t("recipe.create-progress.creating-recipe-with-ai"))
 
-        return await super().parse()
+        result = await super().parse()
+        if not (result and result[0]):
+            return result
+
+        if self.is_social_media_url(self.url) and not self.is_usable_social_ai_recipe(result[0]):
+            self.logger.warning("OpenAI returned an unusable recipe for social media URL")
+            return None
+
+        return result
 
 
 class TranscribedAudio(TypedDict):
@@ -640,8 +752,8 @@ class RecipeScraperOpenGraph(ABCScraperStrategy):
             "description": og_field(properties, "og:description"),
             "image": og_field(properties, "og:image"),
             "recipeYield": "",
-            "recipeIngredient": ["Could not detect ingredients"],
-            "recipeInstructions": [{"text": "Could not detect instructions"}],
+            "recipeIngredient": [OPEN_GRAPH_PLACEHOLDER_INGREDIENT],
+            "recipeInstructions": [{"text": OPEN_GRAPH_PLACEHOLDER_INSTRUCTION}],
             "slug": slugify(og_field(properties, "og:title")),
             "orgURL": self.url or og_field(properties, "og:url"),
             "categories": [],
@@ -667,6 +779,12 @@ class RecipeScraperOpenGraph(ABCScraperStrategy):
         og_data = self.get_recipe_fields(html)
 
         if og_data is None:
+            return None
+
+        if self.is_social_media_url(self.url) and self.ai_enabled():
+            self.logger.warning(
+                "OpenGraph fallback blocked for social media URL after structured AI import failed or was unusable"
+            )
             return None
 
         return Recipe(**og_data), ScrapedExtras()
