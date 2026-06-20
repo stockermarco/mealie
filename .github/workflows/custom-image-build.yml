@@ -6,7 +6,7 @@ on:
       source_ref:
         description: Exact Mealie commit to build
         required: true
-        default: 33fa7b05c222ae980ad122450f7e627c77f1f248
+        default: 33fa7b05a32390fbe0519af423a3bda80cf63bc9
       image_tag:
         description: GHCR image tag to publish
         required: true
@@ -17,7 +17,7 @@ permissions:
   packages: write
 
 env:
-  EXPECTED_SOURCE_REF: 33fa7b05c222ae980ad122450f7e627c77f1f248
+  EXPECTED_SOURCE_REF: 33fa7b05a32390fbe0519af423a3bda80cf63bc9
   INPUT_SOURCE_REF: ${{ inputs.source_ref }}
   INPUT_IMAGE_TAG: ${{ inputs.image_tag }}
   IMAGE_NAME: ghcr.io/stockermarco/mealie
