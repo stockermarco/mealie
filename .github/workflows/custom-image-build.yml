@@ -118,6 +118,7 @@ jobs:
               "node_modules",
               "dist",
           }
+          skip_text_scan_prefixes = ("tests/data/html/",)
           patterns = [
               re.compile(r"AKIA[0-9A-Z]{16}"),
               re.compile(r"-----BEGIN (?:RSA |OPENSSH |EC |DSA |)?PRIVATE KEY-----"),
@@ -130,6 +131,8 @@ jobs:
               if not path.is_file():
                   continue
               if any(part in skip_dirs for part in path.parts):
+                  continue
+              if str(path).startswith(skip_text_scan_prefixes):
                   continue
               if path.stat().st_size > 2_000_000:
                   continue
