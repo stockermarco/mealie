@@ -109,6 +109,12 @@ const developerLinks: SidebarLinks = [
         title: i18n.t("sidebar.parser"),
         restricted: true,
       },
+      {
+        icon: $globals.icons.import,
+        to: "/admin/debug/instagram",
+        title: "Instagram Cookies",
+        restricted: true,
+      },
     ],
   },
 ];

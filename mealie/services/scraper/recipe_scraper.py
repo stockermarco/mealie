@@ -4,6 +4,8 @@ from mealie.core.root_logger import get_logger
 from mealie.lang.providers import Translator
 from mealie.repos.repository_factory import AllRepositories
 from mealie.schema.recipe.recipe import Recipe
+from mealie.schema.recipe.recipe_ingredient import RecipeIngredient, RegisteredParser
+from mealie.services.parser_services import get_parser
 from mealie.services.scraper import cleaner
 from mealie.services.scraper.scraped_extras import ScrapedExtras
 
@@ -42,6 +44,56 @@ class RecipeScraper:
         self.repos = repos
         self.translator = translator
         self.logger = get_logger()
+
+    @staticmethod
+    def _ingredient_needs_parsing(ingredient: RecipeIngredient) -> bool:
+        has_structured_fields = bool(ingredient.quantity or ingredient.unit or ingredient.food)
+        return bool((ingredient.note or ingredient.display or "").strip() and not has_structured_fields)
+
+    @staticmethod
+    def _parsed_ingredient_is_useful(ingredient: RecipeIngredient) -> bool:
+        food_has_id = bool(ingredient.food and getattr(ingredient.food, "id", None))
+        unit_has_id = bool(ingredient.unit and getattr(ingredient.unit, "id", None))
+        unit_is_safe = not ingredient.unit or unit_has_id
+        return food_has_id and unit_is_safe
+
+    async def _auto_parse_ai_ingredients(self, recipe: Recipe) -> Recipe:
+        if not getattr(self.repos, "session", None):
+            return recipe
+
+        ingredients = recipe.recipe_ingredient or []
+        targets = [
+            (index, ingredient, (ingredient.note or ingredient.display or "").strip())
+            for index, ingredient in enumerate(ingredients)
+            if self._ingredient_needs_parsing(ingredient)
+        ]
+        if not targets:
+            return recipe
+
+        for parser_type in (RegisteredParser.openai, RegisteredParser.nlp):
+            try:
+                parser = get_parser(parser_type, self.repos.group_id, self.repos.session, self.translator)
+                parsed = await parser.parse([text for _, _, text in targets])
+                if len(parsed) != len(targets):
+                    raise ValueError(f"{parser_type} returned {len(parsed)} ingredients for {len(targets)} inputs")
+
+                useful_count = 0
+                for (index, original, _), parsed_ingredient in zip(targets, parsed, strict=True):
+                    ingredient = parsed_ingredient.ingredient
+                    if not self._parsed_ingredient_is_useful(ingredient):
+                        ingredients[index] = original
+                        continue
+
+                    useful_count += 1
+                    ingredients[index] = ingredient
+
+                if useful_count:
+                    recipe.recipe_ingredient = ingredients
+                    return recipe
+            except Exception:
+                self.logger.exception(f"Failed to auto-parse imported ingredients with {parser_type}")
+
+        return recipe
 
     async def scrape(
         self,
@@ -84,6 +136,9 @@ class RecipeScraper:
             except Exception:
                 self.logger.exception(f"Failed to clean recipe data from {scraper.__class__.__name__}")
                 continue
+
+            if isinstance(scraper, (RecipeScraperOpenAITranscription, RecipeScraperOpenAI)):
+                recipe = await self._auto_parse_ai_ingredients(recipe)
 
             return recipe, extras
 
