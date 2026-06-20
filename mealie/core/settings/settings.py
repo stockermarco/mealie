@@ -401,6 +401,12 @@ class AppSettings(AppLoggingSettings):
     """
 
     # ===============================================
+    # Social Media Import Configuration
+
+    INSTAGRAM_COOKIES_FILE: str | None = None
+    """Optional Netscape cookies.txt file used by yt-dlp for Instagram reel imports."""
+
+    # ===============================================
     # Web Concurrency
 
     WORKER_PER_CORE: int = 1
