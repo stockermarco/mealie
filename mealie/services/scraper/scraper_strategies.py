@@ -19,6 +19,7 @@ from w3lib.html import get_base_url
 from yt_dlp.extractor.generic import GenericIE
 
 from mealie.core import exceptions
+from mealie.core.config import get_app_settings
 from mealie.core.dependencies.dependencies import get_temporary_path
 from mealie.core.root_logger import get_logger
 from mealie.lang.providers import Translator
@@ -565,6 +566,12 @@ class TranscribedAudio(TypedDict):
 class RecipeScraperOpenAITranscription(ABCScraperStrategy):
     SUBTITLE_LANGS = ["en", "fr", "es", "de", "it"]
 
+    @staticmethod
+    def is_instagram_url(url: str) -> bool:
+        hostname = urlparse(url).hostname or ""
+        hostname = hostname.lower().removeprefix("www.")
+        return ABCScraperStrategy._host_matches(hostname, "instagram.com")
+
     def can_scrape(self) -> bool:
         if not self.url:
             return False
@@ -611,6 +618,11 @@ class RecipeScraperOpenAITranscription(ABCScraperStrategy):
             ],
             "postprocessor_args": ["-ac", "1"],
         }
+
+        settings = get_app_settings()
+        if self.is_instagram_url(self.url) and settings.INSTAGRAM_USERNAME and settings.INSTAGRAM_PASSWORD:
+            ydl_opts["username"] = settings.INSTAGRAM_USERNAME
+            ydl_opts["password"] = settings.INSTAGRAM_PASSWORD
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:

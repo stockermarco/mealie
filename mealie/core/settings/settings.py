@@ -401,6 +401,15 @@ class AppSettings(AppLoggingSettings):
     """
 
     # ===============================================
+    # Social Media Import Configuration
+
+    INSTAGRAM_USERNAME: MaskedNoneString = None
+    """Optional Instagram username used by yt-dlp for public reel metadata/audio extraction."""
+
+    INSTAGRAM_PASSWORD: MaskedNoneString = None
+    """Optional Instagram password used by yt-dlp for public reel metadata/audio extraction."""
+
+    # ===============================================
     # Web Concurrency
 
     WORKER_PER_CORE: int = 1
