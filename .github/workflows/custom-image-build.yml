@@ -18,7 +18,10 @@ permissions:
 
 env:
   EXPECTED_SOURCE_REF: f971d4f30ce776a1c15d06d3246f511a675df1f3
+  INPUT_SOURCE_REF: ${{ inputs.source_ref }}
+  INPUT_IMAGE_TAG: ${{ inputs.image_tag }}
   IMAGE_NAME: ghcr.io/stockermarco/mealie
+  IMAGE_SOURCE: https://github.com/stockermarco/mealie
   SMOKE_CONTAINER: mealie-custom-image-smoke
   SMOKE_VOLUME: mealie-custom-image-smoke-data
   SMOKE_PORT: "18080"
@@ -33,27 +36,25 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [ "${{ inputs.source_ref }}" != "$EXPECTED_SOURCE_REF" ]; then
+          if [ "$INPUT_SOURCE_REF" != "$EXPECTED_SOURCE_REF" ]; then
             echo "::error::source_ref must be exactly $EXPECTED_SOURCE_REF"
             exit 1
           fi
 
-          if [ -z "${{ inputs.image_tag }}" ] || [ "${{ inputs.image_tag }}" = "latest" ]; then
+          if [ -z "$INPUT_IMAGE_TAG" ] || [ "${INPUT_IMAGE_TAG,,}" = "latest" ]; then
             echo "::error::image_tag must be explicit and must not be latest"
             exit 1
           fi
 
-          case "${{ inputs.image_tag }}" in
-            *:*|*/*)
-              echo "::error::image_tag must be a tag only, not an image reference"
-              exit 1
-              ;;
-          esac
+          if [[ ! "$INPUT_IMAGE_TAG" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+            echo "::error::image_tag must match Docker tag format: letters, numbers, dot, underscore, and hyphen only"
+            exit 1
+          fi
 
       - name: Check out exact source commit
         uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.source_ref }}
+          ref: ${{ env.INPUT_SOURCE_REF }}
 
       - name: Verify checked out commit
         run: |
@@ -197,20 +198,31 @@ jobs:
           file: ./docker/Dockerfile
           platforms: linux/amd64
           push: true
-          tags: ${{ env.IMAGE_NAME }}:${{ inputs.image_tag }}
+          tags: ${{ env.IMAGE_NAME }}:${{ env.INPUT_IMAGE_TAG }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: mode=max
+          sbom: true
+          labels: |
+            org.opencontainers.image.source=${{ env.IMAGE_SOURCE }}
+            org.opencontainers.image.revision=${{ env.EXPECTED_SOURCE_REF }}
+            org.opencontainers.image.version=${{ env.INPUT_IMAGE_TAG }}
+            org.opencontainers.image.licenses=AGPL-3.0-only
           build-args: |
             COMMIT=${{ env.EXPECTED_SOURCE_REF }}
 
       - name: Print image digest
+        env:
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
         run: |
           set -euo pipefail
-          echo "Image: $IMAGE_NAME:${{ inputs.image_tag }}"
-          echo "Digest: ${{ steps.build.outputs.digest }}"
+          echo "Image: $IMAGE_NAME:$INPUT_IMAGE_TAG"
+          echo "Digest: $IMAGE_DIGEST"
           {
             echo "### Custom image build"
             echo
-            echo "- Image: \`$IMAGE_NAME:${{ inputs.image_tag }}\`"
-            echo "- Digest: \`${{ steps.build.outputs.digest }}\`"
+            echo "- Image: \`$IMAGE_NAME:$INPUT_IMAGE_TAG\`"
+            echo "- Digest: \`$IMAGE_DIGEST\`"
             echo "- Source commit: \`$EXPECTED_SOURCE_REF\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -218,7 +230,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          image="$IMAGE_NAME:${{ inputs.image_tag }}"
+          image="$IMAGE_NAME:$INPUT_IMAGE_TAG"
           docker pull "$image"
           docker volume create "$SMOKE_VOLUME"
           docker run -d \
