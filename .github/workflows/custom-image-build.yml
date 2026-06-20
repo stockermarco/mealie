@@ -6,18 +6,18 @@ on:
       source_ref:
         description: Exact Mealie commit to build
         required: true
-        default: f971d4f30ce776a1c15d06d3246f511a675df1f3
+        default: 134eaf3f6460799558fb719c5f292efbfdd269f3
       image_tag:
         description: GHCR image tag to publish
         required: true
-        default: v3.19.2-social-f971d4f
+        default: v3.19.2-social-admincookies-134eaf3
 
 permissions:
   contents: read
   packages: write
 
 env:
-  EXPECTED_SOURCE_REF: f971d4f30ce776a1c15d06d3246f511a675df1f3
+  EXPECTED_SOURCE_REF: 134eaf3f6460799558fb719c5f292efbfdd269f3
   INPUT_SOURCE_REF: ${{ inputs.source_ref }}
   INPUT_IMAGE_TAG: ${{ inputs.image_tag }}
   IMAGE_NAME: ghcr.io/stockermarco/mealie
@@ -166,6 +166,9 @@ jobs:
           set -euo pipefail
           uv run pytest \
             tests/unit_tests/services_tests/scraper_tests/test_social_opengraph_import.py \
+            tests/unit_tests/services_tests/scraper_tests/test_video_scraper_instagram_cookies.py \
+            tests/unit_tests/services_tests/scraper_tests/test_ai_import_auto_parse_ingredients.py \
+            tests/unit_tests/routes_tests/admin_tests/test_admin_instagram_cookies.py \
             tests/unit_tests/services_tests/scraper_tests/test_cleaner.py \
             tests/integration_tests/user_recipe_tests/test_recipe_create_from_openai.py
 
@@ -174,14 +177,28 @@ jobs:
           set -euo pipefail
           uv run ruff check \
             mealie/services/scraper/scraper_strategies.py \
-            tests/unit_tests/services_tests/scraper_tests/test_social_opengraph_import.py
+            mealie/services/scraper/recipe_scraper.py \
+            mealie/services/scraper/scraper.py \
+            mealie/routes/admin/admin_debug.py \
+            mealie/routes/recipe/recipe_crud_routes.py \
+            tests/unit_tests/services_tests/scraper_tests/test_social_opengraph_import.py \
+            tests/unit_tests/services_tests/scraper_tests/test_video_scraper_instagram_cookies.py \
+            tests/unit_tests/services_tests/scraper_tests/test_ai_import_auto_parse_ingredients.py \
+            tests/unit_tests/routes_tests/admin_tests/test_admin_instagram_cookies.py
 
       - name: Ruff format check
         run: |
           set -euo pipefail
           uv run ruff format --check \
             mealie/services/scraper/scraper_strategies.py \
-            tests/unit_tests/services_tests/scraper_tests/test_social_opengraph_import.py
+            mealie/services/scraper/recipe_scraper.py \
+            mealie/services/scraper/scraper.py \
+            mealie/routes/admin/admin_debug.py \
+            mealie/routes/recipe/recipe_crud_routes.py \
+            tests/unit_tests/services_tests/scraper_tests/test_social_opengraph_import.py \
+            tests/unit_tests/services_tests/scraper_tests/test_video_scraper_instagram_cookies.py \
+            tests/unit_tests/services_tests/scraper_tests/test_ai_import_auto_parse_ingredients.py \
+            tests/unit_tests/routes_tests/admin_tests/test_admin_instagram_cookies.py
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
