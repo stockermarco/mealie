@@ -234,9 +234,17 @@ class RecipeController(BaseRecipeController):
                 )
             except Exception as e:
                 self.logger.exception("Error in streaming recipe creation")
+                message = e.__class__.__name__
+                if isinstance(e, HTTPException):
+                    detail = e.detail
+                    if isinstance(detail, dict):
+                        message = str(detail.get("details") or detail.get("message") or message)
+                    elif detail:
+                        message = str(detail)
+
                 await queue.put(
                     ServerSentEvent(
-                        data=SSEDataEventMessage(message=e.__class__.__name__),
+                        data=SSEDataEventMessage(message=message),
                         event=SSEDataEventStatus.ERROR,
                     )
                 )

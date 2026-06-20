@@ -15,12 +15,14 @@ from mealie.services.recipe.recipe_data_service import RecipeDataService
 from mealie.services.scraper.scraped_extras import ScrapedExtras
 
 from .recipe_scraper import RecipeScraper
+from .scraper_strategies import ABCScraperStrategy
 
 
 class ParserErrors(StrEnum):
     BAD_RECIPE_DATA = "BAD_RECIPE_DATA"
     NO_RECIPE_DATA = "NO_RECIPE_DATA"
     CONNECTION_ERROR = "CONNECTION_ERROR"
+    SOCIAL_MEDIA_IMPORT_UNAVAILABLE = "SOCIAL_MEDIA_IMPORT_UNAVAILABLE"
 
 
 async def create_from_html(
@@ -52,6 +54,10 @@ async def create_from_html(
     new_recipe, extras = await scraper.scrape(url, html, on_progress=on_progress)
 
     if not new_recipe:
+        if ABCScraperStrategy.is_social_media_url(url):
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST, {"details": ParserErrors.SOCIAL_MEDIA_IMPORT_UNAVAILABLE.value}
+            )
         raise HTTPException(status.HTTP_400_BAD_REQUEST, {"details": ParserErrors.BAD_RECIPE_DATA.value})
 
     new_recipe.id = uuid4()
