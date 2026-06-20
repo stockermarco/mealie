@@ -1,0 +1,260 @@
+name: Manual Custom Image Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Exact Mealie commit to build
+        required: true
+        default: f971d4f30ce776a1c15d06d3246f511a675df1f3
+      image_tag:
+        description: GHCR image tag to publish
+        required: true
+        default: v3.19.2-social-f971d4f
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  EXPECTED_SOURCE_REF: f971d4f30ce776a1c15d06d3246f511a675df1f3
+  IMAGE_NAME: ghcr.io/stockermarco/mealie
+  SMOKE_CONTAINER: mealie-custom-image-smoke
+  SMOKE_VOLUME: mealie-custom-image-smoke-data
+  SMOKE_PORT: "18080"
+
+jobs:
+  build:
+    name: Test, build, push, and smoke test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Validate manual inputs
+        run: |
+          set -euo pipefail
+
+          if [ "${{ inputs.source_ref }}" != "$EXPECTED_SOURCE_REF" ]; then
+            echo "::error::source_ref must be exactly $EXPECTED_SOURCE_REF"
+            exit 1
+          fi
+
+          if [ -z "${{ inputs.image_tag }}" ] || [ "${{ inputs.image_tag }}" = "latest" ]; then
+            echo "::error::image_tag must be explicit and must not be latest"
+            exit 1
+          fi
+
+          case "${{ inputs.image_tag }}" in
+            *:*|*/*)
+              echo "::error::image_tag must be a tag only, not an image reference"
+              exit 1
+              ;;
+          esac
+
+      - name: Check out exact source commit
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source_ref }}
+
+      - name: Verify checked out commit
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_REF"
+
+      - name: Check Docker build context
+        run: |
+          set -euo pipefail
+
+          for required in ".git" ".github" ".venv" "venv" "**/__pycache__/" "*/data/db" "*/mealie/.temp"; do
+            if ! grep -Fxq "$required" .dockerignore; then
+              echo "::error::.dockerignore does not contain required entry: $required"
+              exit 1
+            fi
+          done
+
+          forbidden_paths="$(
+            find . \
+              -path './.git' -prune -o \
+              -path './.github' -prune -o \
+              -path './.venv' -prune -o \
+              -path './frontend/node_modules' -prune -o \
+              -path './.pytest_cache' -prune -o \
+              -path './.ruff_cache' -prune -o \
+              -path './.mypy_cache' -prune -o \
+              \( \
+                -name '.env' -o \
+                -name '*.db' -o \
+                -name '*.sqlite' -o \
+                -name '*.sqlite3' -o \
+                -name '*.pem' -o \
+                -name '*.key' -o \
+                -name 'id_rsa' -o \
+                -name 'id_ed25519' -o \
+                -path './data/*' -o \
+                -path './mealie/data/*' -o \
+                -path './.uv-bootstrap/*' -o \
+                -path './.uv-cache/*' \
+              \) -print
+          )"
+
+          if [ -n "$forbidden_paths" ]; then
+            echo "::error::Forbidden files found in build context:"
+            printf '%s\n' "$forbidden_paths"
+            exit 1
+          fi
+
+          python - <<'PY'
+          import re
+          import sys
+          from pathlib import Path
+
+          skip_dirs = {
+              ".git",
+              ".github",
+              ".venv",
+              ".mypy_cache",
+              ".pytest_cache",
+              ".ruff_cache",
+              "node_modules",
+              "dist",
+          }
+          patterns = [
+              re.compile(r"AKIA[0-9A-Z]{16}"),
+              re.compile(r"-----BEGIN (?:RSA |OPENSSH |EC |DSA |)?PRIVATE KEY-----"),
+              re.compile(r"OPENAI_API_KEY\s*=\s*sk-[A-Za-z0-9_-]+"),
+              re.compile(r"api[_-]?key\s*[:=]\s*['\"]sk-[A-Za-z0-9_-]{20,}['\"]", re.IGNORECASE),
+          ]
+
+          hits = []
+          for path in Path(".").rglob("*"):
+              if not path.is_file():
+                  continue
+              if any(part in skip_dirs for part in path.parts):
+                  continue
+              if path.stat().st_size > 2_000_000:
+                  continue
+              text = path.read_text(errors="ignore")
+              if any(pattern.search(text) for pattern in patterns):
+                  hits.append(str(path))
+
+          if hits:
+              print("Secret-like content found in build context:", file=sys.stderr)
+              print("\n".join(hits), file=sys.stderr)
+              sys.exit(1)
+          PY
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Install dev dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y libsasl2-dev libldap2-dev libssl-dev
+          uv sync --frozen --group dev
+
+      - name: Run targeted regression tests
+        run: |
+          set -euo pipefail
+          uv run pytest \
+            tests/unit_tests/services_tests/scraper_tests/test_social_opengraph_import.py \
+            tests/unit_tests/services_tests/scraper_tests/test_cleaner.py \
+            tests/integration_tests/user_recipe_tests/test_recipe_create_from_openai.py
+
+      - name: Ruff check
+        run: |
+          set -euo pipefail
+          uv run ruff check \
+            mealie/services/scraper/scraper_strategies.py \
+            tests/unit_tests/services_tests/scraper_tests/test_social_opengraph_import.py
+
+      - name: Ruff format check
+        run: |
+          set -euo pipefail
+          uv run ruff format --check \
+            mealie/services/scraper/scraper_strategies.py \
+            tests/unit_tests/services_tests/scraper_tests/test_social_opengraph_import.py
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push custom image
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./docker/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.IMAGE_NAME }}:${{ inputs.image_tag }}
+          build-args: |
+            COMMIT=${{ env.EXPECTED_SOURCE_REF }}
+
+      - name: Print image digest
+        run: |
+          set -euo pipefail
+          echo "Image: $IMAGE_NAME:${{ inputs.image_tag }}"
+          echo "Digest: ${{ steps.build.outputs.digest }}"
+          {
+            echo "### Custom image build"
+            echo
+            echo "- Image: \`$IMAGE_NAME:${{ inputs.image_tag }}\`"
+            echo "- Digest: \`${{ steps.build.outputs.digest }}\`"
+            echo "- Source commit: \`$EXPECTED_SOURCE_REF\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Pull and smoke test image
+        run: |
+          set -euo pipefail
+
+          image="$IMAGE_NAME:${{ inputs.image_tag }}"
+          docker pull "$image"
+          docker volume create "$SMOKE_VOLUME"
+          docker run -d \
+            --name "$SMOKE_CONTAINER" \
+            -p "127.0.0.1:$SMOKE_PORT:9000" \
+            -v "$SMOKE_VOLUME:/app/data" \
+            -e ALLOW_SIGNUP=false \
+            -e PUID=911 \
+            -e PGID=911 \
+            -e BASE_URL="http://127.0.0.1:$SMOKE_PORT" \
+            -e SECRET="smoke-test-secret-not-for-production" \
+            "$image"
+
+          status=""
+          for _ in $(seq 1 90); do
+            status="$(docker inspect --format '{{.State.Health.Status}}' "$SMOKE_CONTAINER" 2>/dev/null || true)"
+            if [ "$status" = "healthy" ]; then
+              break
+            fi
+            if [ "$status" = "unhealthy" ]; then
+              docker logs "$SMOKE_CONTAINER"
+              exit 1
+            fi
+            sleep 5
+          done
+
+          if [ "$status" != "healthy" ]; then
+            docker logs "$SMOKE_CONTAINER"
+            echo "::error::Container did not become healthy"
+            exit 1
+          fi
+
+          curl -fsS "http://127.0.0.1:$SMOKE_PORT/api/app/about" | python -m json.tool
+
+      - name: Clean smoke test resources
+        if: always()
+        run: |
+          docker rm -f "$SMOKE_CONTAINER" || true
+          docker volume rm "$SMOKE_VOLUME" || true
