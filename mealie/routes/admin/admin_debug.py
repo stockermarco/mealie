@@ -1,6 +1,8 @@
 import datetime
 import os
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 from fastapi import APIRouter, File, HTTPException, UploadFile, status
@@ -16,6 +18,8 @@ from mealie.services.openai import OpenAILocalImage, OpenAIService
 router = APIRouter(prefix="/debug")
 
 MAX_SOCIAL_COOKIES_BYTES = 200_000
+YOUTUBE_COOKIE_CHECK_URL = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+YOUTUBE_COOKIE_CHECK_TIMEOUT = 25
 
 
 class SocialCookiesStatus(MealieModel):
@@ -26,6 +30,7 @@ class SocialCookiesStatus(MealieModel):
     updated_at: datetime.datetime | None = None
     valid_netscape: bool = False
     has_platform_cookies: bool = False
+    ready: bool = False
     message: str | None = None
 
 
@@ -57,7 +62,54 @@ class AdminDebugController(BaseAdminController):
             return None
         return Path(self.settings.YOUTUBE_COOKIES_FILE)
 
-    def _cookies_status(self, cookies_path: Path | None, setting_name: str, base_domain: str) -> SocialCookiesStatus:
+    @staticmethod
+    def _youtube_cookie_live_check(cookies_path: Path) -> tuple[bool, str]:
+        try:
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "yt_dlp",
+                    "--cookies",
+                    str(cookies_path),
+                    "--simulate",
+                    "--skip-download",
+                    "--no-playlist",
+                    "--no-warnings",
+                    "--quiet",
+                    "--print",
+                    "id",
+                    YOUTUBE_COOKIE_CHECK_URL,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=YOUTUBE_COOKIE_CHECK_TIMEOUT,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            return False, "YouTube cookie check timed out."
+
+        output = f"{result.stdout}\n{result.stderr}"
+        if result.returncode == 0 and "dQw4w9WgXcQ" in result.stdout:
+            return True, "YouTube cookies are uploaded, readable, and accepted by yt-dlp."
+
+        output_lower = output.lower()
+        if "javascript runtime" in output_lower or "js runtime" in output_lower:
+            return False, "YouTube cookies are readable, but yt-dlp needs a JavaScript runtime in the image."
+        if "sign in to confirm" in output_lower or "not a bot" in output_lower:
+            return False, "YouTube cookies are readable, but YouTube still asks for bot/login confirmation."
+        if "cookies" in output_lower or "login" in output_lower:
+            return False, "YouTube cookies are readable, but YouTube did not accept them."
+
+        return False, "YouTube cookie live check failed."
+
+    def _cookies_status(
+        self,
+        cookies_path: Path | None,
+        setting_name: str,
+        base_domain: str,
+        live_check: bool = False,
+    ) -> SocialCookiesStatus:
         if not cookies_path:
             return SocialCookiesStatus(
                 configured=False,
@@ -81,6 +133,11 @@ class AdminDebugController(BaseAdminController):
             text = f.read(MAX_SOCIAL_COOKIES_BYTES)
 
         valid_netscape, has_platform_cookies = self._inspect_cookie_text(text, base_domain)
+        ready = valid_netscape and has_platform_cookies
+        message = "Cookie file is ready." if ready else "Cookie file looks invalid."
+        if ready and live_check:
+            ready, message = self._youtube_cookie_live_check(cookies_path)
+
         return SocialCookiesStatus(
             configured=True,
             exists=True,
@@ -89,16 +146,17 @@ class AdminDebugController(BaseAdminController):
             updated_at=datetime.datetime.fromtimestamp(stat.st_mtime, tz=datetime.UTC),
             valid_netscape=valid_netscape,
             has_platform_cookies=has_platform_cookies,
-            message=(
-                "Cookie file is ready." if valid_netscape and has_platform_cookies else "Cookie file looks invalid."
-            ),
+            ready=ready,
+            message=message,
         )
 
     def _instagram_cookies_status(self) -> SocialCookiesStatus:
         return self._cookies_status(self._instagram_cookies_path(), "INSTAGRAM_COOKIES_FILE", "instagram.com")
 
     def _youtube_cookies_status(self) -> SocialCookiesStatus:
-        return self._cookies_status(self._youtube_cookies_path(), "YOUTUBE_COOKIES_FILE", "youtube.com")
+        return self._cookies_status(
+            self._youtube_cookies_path(), "YOUTUBE_COOKIES_FILE", "youtube.com", live_check=True
+        )
 
     async def _upload_cookies(
         self,

@@ -15,17 +15,12 @@
       </v-alert>
 
       <v-alert
-        v-else-if="
-          instagramStatus
-            && instagramStatus.exists
-            && instagramStatus.validNetscape
-            && instagramStatus.hasPlatformCookies
-        "
+        v-else-if="instagramStatus?.ready"
         type="success"
         variant="tonal"
         class="my-4"
       >
-        Instagram cookies are uploaded and readable.
+        {{ instagramStatus.message || "Instagram cookies are uploaded and readable." }}
       </v-alert>
 
       <v-alert
@@ -56,6 +51,10 @@
         <v-list-item
           title="Instagram cookies"
           :subtitle="instagramStatus.hasPlatformCookies ? 'found' : 'missing'"
+        />
+        <v-list-item
+          title="Ready"
+          :subtitle="instagramStatus.ready ? 'yes' : 'no'"
         />
         <v-list-item
           title="Updated"
@@ -111,17 +110,12 @@
       </v-alert>
 
       <v-alert
-        v-else-if="
-          youtubeStatus
-            && youtubeStatus.exists
-            && youtubeStatus.validNetscape
-            && youtubeStatus.hasPlatformCookies
-        "
+        v-else-if="youtubeStatus?.ready"
         type="success"
         variant="tonal"
         class="my-4"
       >
-        YouTube cookies are uploaded and readable.
+        {{ youtubeStatus.message || "YouTube cookies are uploaded and readable." }}
       </v-alert>
 
       <v-alert
@@ -152,6 +146,10 @@
         <v-list-item
           title="YouTube cookies"
           :subtitle="youtubeStatus.hasPlatformCookies ? 'found' : 'missing'"
+        />
+        <v-list-item
+          title="Ready"
+          :subtitle="youtubeStatus.ready ? 'yes' : 'no'"
         />
         <v-list-item
           title="Updated"
