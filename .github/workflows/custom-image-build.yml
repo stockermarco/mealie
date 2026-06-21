@@ -6,18 +6,18 @@ on:
       source_ref:
         description: Exact Mealie commit to build
         required: true
-        default: f57c023a1ff3f53dee21d467506dd69367165e37
+        default: d7c2a8cf14361fd2ead2076df64dbf400680558c
       image_tag:
         description: GHCR image tag to publish
         required: true
-        default: v3.19.2-social-youtube-deno-f57c023
+        default: v3.19.2-social-youtube-subs-d7c2a8c
 
 permissions:
   contents: read
   packages: write
 
 env:
-  EXPECTED_SOURCE_REF: f57c023a1ff3f53dee21d467506dd69367165e37
+  EXPECTED_SOURCE_REF: d7c2a8cf14361fd2ead2076df64dbf400680558c
   INPUT_SOURCE_REF: ${{ inputs.source_ref }}
   INPUT_IMAGE_TAG: ${{ inputs.image_tag }}
   IMAGE_NAME: ghcr.io/stockermarco/mealie
