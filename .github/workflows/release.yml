@@ -8,6 +8,7 @@ jobs:
   commit-version-bump:
     name: Commit version bump to repository
     runs-on: ubuntu-latest
+    if: github.repository == 'mealie-recipes/mealie' || vars.ENABLE_UPSTREAM_AUTOMATION == 'true'
     permissions:
       contents: write
     outputs:

@@ -14,6 +14,7 @@ permissions:
 jobs:
   sync-locales:
     runs-on: ubuntu-latest
+    if: github.repository == 'mealie-recipes/mealie' || vars.ENABLE_UPSTREAM_AUTOMATION == 'true'
     env:
       # Install from the committed lockfile; never re-resolve (see pyproject
       # [tool.uv] exclude-newer cooling window).
