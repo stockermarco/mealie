@@ -1,13 +1,25 @@
 import { BaseAPI } from "../base/base-clients";
-import type { DebugResponse } from "~/lib/api/types/admin";
+import type { DebugResponse, InstagramCookiesStatus } from "~/lib/api/types/admin";
 
 const prefix = "/api";
 
 const routes = {
   openai: providerId => `${prefix}/admin/debug/openai/${providerId}`,
+  instagramCookies: `${prefix}/admin/debug/instagram-cookies`,
 };
 
 export class AdminDebugAPI extends BaseAPI {
+  async getInstagramCookiesStatus() {
+    return await this.requests.get<InstagramCookiesStatus>(routes.instagramCookies);
+  }
+
+  async uploadInstagramCookies(fileObject: Blob | File) {
+    const formData = new FormData();
+    formData.append("cookies", fileObject);
+
+    return await this.requests.post<InstagramCookiesStatus>(routes.instagramCookies, formData);
+  }
+
   async debugOpenAI(providerId: string, fileObject: Blob | File | undefined = undefined, fileName = "") {
     let formData: FormData | null = null;
     if (fileObject) {

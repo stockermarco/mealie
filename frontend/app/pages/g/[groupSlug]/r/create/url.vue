@@ -102,14 +102,25 @@
         <v-divider class="my-3 mx-2" />
 
         <div class="force-url-white">
-          <p>
-            {{ $t("recipe.scrape-recipe-website-being-blocked") }}
-            <router-link :to="htmlOrJsonImporterTarget">{{ $t("recipe.scrape-recipe-try-importing-raw-html-instead") }}</router-link>
-          </p>
-          <br>
-          <p>
-            {{ $t("new-recipe.error-details") }}
-          </p>
+          <template v-if="state.errorMessage === 'SOCIAL_MEDIA_IMPORT_UNAVAILABLE'">
+            <p>
+              Instagram konnte nicht importiert werden. Die Cookies fehlen, sind abgelaufen, rate-limitiert oder der Inhalt ist nicht zugänglich.
+            </p>
+            <br>
+            <p>
+              Lade im Adminbereich eine aktuelle Netscape cookies.txt hoch und versuche den Import danach erneut.
+            </p>
+          </template>
+          <template v-else>
+            <p>
+              {{ $t("recipe.scrape-recipe-website-being-blocked") }}
+              <router-link :to="htmlOrJsonImporterTarget">{{ $t("recipe.scrape-recipe-try-importing-raw-html-instead") }}</router-link>
+            </p>
+            <br>
+            <p>
+              {{ $t("new-recipe.error-details") }}
+            </p>
+          </template>
         </div>
         <div class="d-flex row justify-space-around my-3 force-url-white">
           <a
@@ -156,6 +167,7 @@ definePageMeta({
 });
 const state = reactive({
   error: false,
+  errorMessage: "",
   loading: false,
 });
 
@@ -179,9 +191,10 @@ const {
 const bulkImporterTarget = computed(() => `/g/${groupSlug.value}/r/create/bulk`);
 const htmlOrJsonImporterTarget = computed(() => `/g/${groupSlug.value}/r/create/html`);
 
-function handleResponse(response: AxiosResponse<string> | null, refreshTags = false) {
+function handleResponse(response: AxiosResponse<string> | null, refreshTags = false, error: Error | null = null) {
   if (response?.status !== 201) {
     state.error = true;
+    state.errorMessage = error?.message || "";
     state.loading = false;
     return;
   }
@@ -271,14 +284,14 @@ async function createByUrl(url: string | null, importKeywordsAsTags: boolean, im
     return;
   }
   state.loading = true;
-  const { response } = await api.recipes.createOneByUrl(
+  const { response, error } = await api.recipes.createOneByUrl(
     url,
     importKeywordsAsTags,
     importCategories,
     (message: string) => createStatus.value = message,
   );
   createStatus.value = null;
-  handleResponse(response, importKeywordsAsTags);
+  handleResponse(response, importKeywordsAsTags, error);
 }
 </script>
 
