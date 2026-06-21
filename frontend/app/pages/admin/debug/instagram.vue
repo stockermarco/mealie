@@ -1,12 +1,12 @@
 <template>
   <v-container class="pa-0">
     <v-container>
-      <BaseCardSectionTitle title="Instagram Cookies">
-        Upload and check the cookies.txt file used for Instagram recipe imports.
+      <BaseCardSectionTitle title="Social Media Cookies">
+        Upload and check cookies.txt files used for social video recipe imports.
       </BaseCardSectionTitle>
 
       <v-alert
-        v-if="status && !status.configured"
+        v-if="instagramStatus && !instagramStatus.configured"
         type="warning"
         variant="tonal"
         class="my-4"
@@ -15,7 +15,12 @@
       </v-alert>
 
       <v-alert
-        v-else-if="status && status.exists && status.validNetscape && status.hasInstagramCookies"
+        v-else-if="
+          instagramStatus
+            && instagramStatus.exists
+            && instagramStatus.validNetscape
+            && instagramStatus.hasPlatformCookies
+        "
         type="success"
         variant="tonal"
         class="my-4"
@@ -24,53 +29,53 @@
       </v-alert>
 
       <v-alert
-        v-else-if="status"
+        v-else-if="instagramStatus"
         type="warning"
         variant="tonal"
         class="my-4"
       >
-        {{ status.message || "Instagram cookies are not ready." }}
+        {{ instagramStatus.message || "Instagram cookies are not ready." }}
       </v-alert>
 
       <v-list
-        v-if="status"
+        v-if="instagramStatus"
         density="compact"
       >
         <v-list-item
           title="Configured"
-          :subtitle="status.configured ? 'yes' : 'no'"
+          :subtitle="instagramStatus.configured ? 'yes' : 'no'"
         />
         <v-list-item
           title="File uploaded"
-          :subtitle="status.exists ? 'yes' : 'no'"
+          :subtitle="instagramStatus.exists ? 'yes' : 'no'"
         />
         <v-list-item
           title="Writable"
-          :subtitle="status.writable ? 'yes' : 'no'"
+          :subtitle="instagramStatus.writable ? 'yes' : 'no'"
         />
         <v-list-item
           title="Instagram cookies"
-          :subtitle="status.hasInstagramCookies ? 'found' : 'missing'"
+          :subtitle="instagramStatus.hasPlatformCookies ? 'found' : 'missing'"
         />
         <v-list-item
           title="Updated"
-          :subtitle="status.updatedAt ? new Date(status.updatedAt).toLocaleString() : '-'"
+          :subtitle="instagramStatus.updatedAt ? new Date(instagramStatus.updatedAt).toLocaleString() : '-'"
         />
       </v-list>
 
       <input
-        ref="fileInput"
+        ref="instagramFileInput"
         class="d-none"
         type="file"
         accept=".txt,text/plain"
-        @change="uploadCookies"
+        @change="uploadInstagramCookies"
       >
 
       <v-card-actions class="px-0">
         <BaseButton
-          :disabled="!status?.configured"
+          :disabled="!instagramStatus?.configured"
           :loading="loading"
-          @click="fileInput?.click()"
+          @click="instagramFileInput?.click()"
         >
           <template #icon>
             {{ $globals.icons.upload }}
@@ -88,6 +93,92 @@
           Refresh
         </BaseButton>
       </v-card-actions>
+
+      <BaseCardSectionTitle
+        title="YouTube Cookies"
+        class="mt-8"
+      >
+        Upload and check the cookies.txt file used for YouTube Shorts recipe imports.
+      </BaseCardSectionTitle>
+
+      <v-alert
+        v-if="youtubeStatus && !youtubeStatus.configured"
+        type="warning"
+        variant="tonal"
+        class="my-4"
+      >
+        YOUTUBE_COOKIES_FILE is not configured.
+      </v-alert>
+
+      <v-alert
+        v-else-if="
+          youtubeStatus
+            && youtubeStatus.exists
+            && youtubeStatus.validNetscape
+            && youtubeStatus.hasPlatformCookies
+        "
+        type="success"
+        variant="tonal"
+        class="my-4"
+      >
+        YouTube cookies are uploaded and readable.
+      </v-alert>
+
+      <v-alert
+        v-else-if="youtubeStatus"
+        type="warning"
+        variant="tonal"
+        class="my-4"
+      >
+        {{ youtubeStatus.message || "YouTube cookies are not ready." }}
+      </v-alert>
+
+      <v-list
+        v-if="youtubeStatus"
+        density="compact"
+      >
+        <v-list-item
+          title="Configured"
+          :subtitle="youtubeStatus.configured ? 'yes' : 'no'"
+        />
+        <v-list-item
+          title="File uploaded"
+          :subtitle="youtubeStatus.exists ? 'yes' : 'no'"
+        />
+        <v-list-item
+          title="Writable"
+          :subtitle="youtubeStatus.writable ? 'yes' : 'no'"
+        />
+        <v-list-item
+          title="YouTube cookies"
+          :subtitle="youtubeStatus.hasPlatformCookies ? 'found' : 'missing'"
+        />
+        <v-list-item
+          title="Updated"
+          :subtitle="youtubeStatus.updatedAt ? new Date(youtubeStatus.updatedAt).toLocaleString() : '-'"
+        />
+      </v-list>
+
+      <input
+        ref="youtubeFileInput"
+        class="d-none"
+        type="file"
+        accept=".txt,text/plain"
+        @change="uploadYoutubeCookies"
+      >
+
+      <v-card-actions class="px-0">
+        <BaseButton
+          :disabled="!youtubeStatus?.configured"
+          :loading="loading"
+          @click="youtubeFileInput?.click()"
+        >
+          <template #icon>
+            {{ $globals.icons.upload }}
+          </template>
+          Upload YouTube cookies.txt
+        </BaseButton>
+      </v-card-actions>
     </v-container>
   </v-container>
 </template>
@@ -95,29 +186,35 @@
 <script setup lang="ts">
 import { useAdminApi } from "~/composables/api";
 import { alert } from "~/composables/use-toast";
-import type { InstagramCookiesStatus } from "~/lib/api/types/admin";
+import type { SocialCookiesStatus } from "~/lib/api/types/admin";
 
 definePageMeta({
   layout: "admin",
 });
 
 useSeoMeta({
-  title: "Instagram Cookies",
+  title: "Social Media Cookies",
 });
 
 const api = useAdminApi();
 const loading = ref(false);
-const status = ref<InstagramCookiesStatus | null>(null);
-const fileInput = ref<HTMLInputElement | null>(null);
+const instagramStatus = ref<SocialCookiesStatus | null>(null);
+const youtubeStatus = ref<SocialCookiesStatus | null>(null);
+const instagramFileInput = ref<HTMLInputElement | null>(null);
+const youtubeFileInput = ref<HTMLInputElement | null>(null);
 
 async function loadStatus() {
   loading.value = true;
-  const { data } = await api.debug.getInstagramCookiesStatus();
-  status.value = data || null;
+  const [instagram, youtube] = await Promise.all([
+    api.debug.getInstagramCookiesStatus(),
+    api.debug.getYoutubeCookiesStatus(),
+  ]);
+  instagramStatus.value = instagram.data || null;
+  youtubeStatus.value = youtube.data || null;
   loading.value = false;
 }
 
-async function uploadCookies(event: Event) {
+async function uploadInstagramCookies(event: Event) {
   const input = event.target as HTMLInputElement;
   const file = input.files?.[0];
   input.value = "";
@@ -126,11 +223,29 @@ async function uploadCookies(event: Event) {
   loading.value = true;
   try {
     const { data } = await api.debug.uploadInstagramCookies(file);
-    status.value = data || null;
+    instagramStatus.value = data || null;
     alert.success("Instagram cookies uploaded");
   }
   catch {
     alert.error("Instagram cookie upload failed");
+  }
+  loading.value = false;
+}
+
+async function uploadYoutubeCookies(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = "";
+  if (!file) return;
+
+  loading.value = true;
+  try {
+    const { data } = await api.debug.uploadYoutubeCookies(file);
+    youtubeStatus.value = data || null;
+    alert.success("YouTube cookies uploaded");
+  }
+  catch {
+    alert.error("YouTube cookie upload failed");
   }
   loading.value = false;
 }

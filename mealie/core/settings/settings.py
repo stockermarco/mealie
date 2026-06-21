@@ -429,6 +429,9 @@ class AppSettings(AppLoggingSettings):
     INSTAGRAM_COOKIES_FILE: str | None = None
     """Optional Netscape cookies.txt file used by yt-dlp for Instagram reel imports."""
 
+    YOUTUBE_COOKIES_FILE: str | None = None
+    """Optional Netscape cookies.txt file used by yt-dlp for YouTube shorts/video imports."""
+
     # ===============================================
     # Web Concurrency
 
