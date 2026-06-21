@@ -118,6 +118,7 @@ export interface SocialCookiesStatus {
   updatedAt?: string | null;
   validNetscape: boolean;
   hasPlatformCookies: boolean;
+  ready: boolean;
   message?: string | null;
 }
 export type InstagramCookiesStatus = SocialCookiesStatus;

@@ -21,6 +21,8 @@ RUN yarn generate
 ###############################################
 # Base Image - Python
 ###############################################
+FROM denoland/deno:bin-2.4.5 AS deno-bin
+
 FROM python:3.12-slim@sha256:7026274c107626d7e940e0e5d6730481a4600ae95d5ca7eb532dd4180313fea9 \
     AS python-base
 
@@ -138,6 +140,7 @@ RUN mkdir -p /run/secrets
 
 # Copy venv into image. It contains a fully-installed mealie backend and frontend.
 COPY --from=venv-builder $VENV_PATH $VENV_PATH
+COPY --from=deno-bin /deno /usr/local/bin/deno
 
 # install nltk data for the ingredient parser
 ENV NLTK_DATA="/nltk_data/"
