@@ -564,7 +564,7 @@ class TranscribedAudio(TypedDict):
 
 
 class RecipeScraperOpenAITranscription(ABCScraperStrategy):
-    SUBTITLE_LANGS = ["en", "fr", "es", "de", "it"]
+    SUBTITLE_LANGS = ["en-orig", "en", "de", "fr", "es", "it"]
 
     @staticmethod
     def is_instagram_url(url: str) -> bool:
@@ -604,8 +604,78 @@ class RecipeScraperOpenAITranscription(ABCScraperStrategy):
         content = re.sub(r"<[^>]+>", "", raw_content)
         return content
 
+    def _cookiefile_opts(self) -> dict[str, str]:
+        settings = get_app_settings()
+        instagram_cookies_file = getattr(settings, "INSTAGRAM_COOKIES_FILE", None)
+        youtube_cookies_file = getattr(settings, "YOUTUBE_COOKIES_FILE", None)
+        if self.is_instagram_url(self.url) and instagram_cookies_file:
+            return {"cookiefile": instagram_cookies_file}
+        if self.is_youtube_url(self.url) and youtube_cookies_file:
+            return {"cookiefile": youtube_cookies_file}
+        return {}
+
+    def _download_youtube_subtitles(self, temp_path: Path) -> TranscribedAudio | None:
+        output_template = temp_path / "mealie"
+        metadata_opts = {
+            "quiet": True,
+            "skip_download": True,
+            "ignore_no_formats_error": True,
+            **self._cookiefile_opts(),
+        }
+
+        try:
+            with yt_dlp.YoutubeDL(metadata_opts) as ydl:
+                info = ydl.extract_info(self.url, download=False)
+        except Exception:
+            self.logger.exception("Failed to inspect YouTube subtitles")
+            return None
+
+        subtitles = (info or {}).get("subtitles") or {}
+        automatic_captions = (info or {}).get("automatic_captions") or {}
+        available_langs = set(subtitles) | set(automatic_captions)
+        subtitle_lang = next((lang for lang in self.SUBTITLE_LANGS if lang in available_langs), None)
+        if not subtitle_lang:
+            return None
+
+        ydl_opts = {
+            "outtmpl": str(output_template) + ".%(ext)s",
+            "quiet": True,
+            "writesubtitles": True,
+            "writeautomaticsub": True,
+            "subtitleslangs": [subtitle_lang],
+            "subtitlesformat": "vtt",
+            "skip_download": True,
+            "ignore_no_formats_error": True,
+            **self._cookiefile_opts(),
+        }
+
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(self.url, download=True) or info
+        except Exception:
+            self.logger.exception("Failed to download YouTube subtitles")
+            return None
+
+        subtitle_path = output_template.with_suffix(f".{subtitle_lang}.vtt")
+        if not subtitle_path.exists():
+            return None
+
+        return {
+            "audio": output_template.with_suffix(".mp3"),
+            "subtitle": subtitle_path,
+            "title": info.get("title", ""),
+            "description": info.get("description", ""),
+            "thumbnail_url": info.get("thumbnail") or None,
+            "transcription": "",
+        }
+
     def _download_audio(self, temp_path: Path) -> TranscribedAudio:
         """Downloads audio and subtitles from the video URL."""
+        if self.is_youtube_url(self.url):
+            subtitle_data = self._download_youtube_subtitles(temp_path)
+            if subtitle_data:
+                return subtitle_data
+
         output_template = temp_path / "mealie"  # No extension here
 
         ydl_opts = {
@@ -625,13 +695,8 @@ class RecipeScraperOpenAITranscription(ABCScraperStrategy):
                 }
             ],
             "postprocessor_args": ["-ac", "1"],
+            **self._cookiefile_opts(),
         }
-
-        settings = get_app_settings()
-        if self.is_instagram_url(self.url) and settings.INSTAGRAM_COOKIES_FILE:
-            ydl_opts["cookiefile"] = settings.INSTAGRAM_COOKIES_FILE
-        elif self.is_youtube_url(self.url) and settings.YOUTUBE_COOKIES_FILE:
-            ydl_opts["cookiefile"] = settings.YOUTUBE_COOKIES_FILE
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:

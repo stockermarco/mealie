@@ -80,3 +80,41 @@ def test_empty_social_cookies_file_settings_are_ignored(monkeypatch: pytest.Monk
 
     opts = FakeYoutubeDL.captured_opts[-1]
     assert "cookiefile" not in opts
+
+
+def test_youtube_subtitles_are_used_before_video_download(monkeypatch: pytest.MonkeyPatch, tmp_path):
+    class SubtitleYoutubeDL:
+        captured_opts: list[dict] = []
+
+        def __init__(self, opts: dict) -> None:
+            self.captured_opts.append(opts)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def extract_info(self, url: str, download: bool):
+            if download:
+                (tmp_path / "mealie.en-orig.vtt").write_text("WEBVTT\n\n00:00:00.000 --> 00:00:01.000\none cup sugar\n")
+            return {
+                "title": "Recipe Short",
+                "description": "Short description",
+                "thumbnail": "https://example.com/thumb.jpg",
+                "automatic_captions": {"en-orig": [{}]},
+                "subtitles": {},
+            }
+
+    monkeypatch.setattr(scraper_strategies.yt_dlp, "YoutubeDL", SubtitleYoutubeDL)
+    monkeypatch.setattr(
+        scraper_strategies,
+        "get_app_settings",
+        lambda: SimpleNamespace(INSTAGRAM_COOKIES_FILE=None, YOUTUBE_COOKIES_FILE=None),
+    )
+
+    video_data = scraper("https://www.youtube.com/shorts/abc123")._download_audio(tmp_path)
+
+    assert video_data["subtitle"] == tmp_path / "mealie.en-orig.vtt"
+    assert video_data["title"] == "Recipe Short"
+    assert all("format" not in opts for opts in SubtitleYoutubeDL.captured_opts)
