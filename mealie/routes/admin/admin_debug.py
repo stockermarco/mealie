@@ -39,7 +39,9 @@ class AdminDebugController(BaseAdminController):
     @staticmethod
     def _inspect_cookie_text(text: str, base_domain: str = "instagram.com") -> tuple[bool, bool]:
         cookie_lines = [
-            line for line in text.splitlines() if line and not line.startswith("#") and len(line.split("\t")) >= 7
+            line
+            for line in text.splitlines()
+            if line and not line.startswith("#") and len(line.split("\t")) >= 7
         ]
         valid_netscape = bool(cookie_lines) or text.startswith("# Netscape HTTP Cookie File")
         has_platform_cookies = any(
@@ -101,7 +103,11 @@ class AdminDebugController(BaseAdminController):
         return self._cookies_status(self._youtube_cookies_path(), "YOUTUBE_COOKIES_FILE", "youtube.com")
 
     async def _upload_cookies(
-        self, cookies: UploadFile, cookies_path: Path | None, setting_name: str, base_domain: str
+        self,
+        cookies: UploadFile,
+        cookies_path: Path | None,
+        setting_name: str,
+        base_domain: str,
     ) -> SocialCookiesStatus:
         if not cookies_path:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, f"{setting_name} is not configured")
