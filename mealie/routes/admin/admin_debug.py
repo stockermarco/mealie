@@ -32,12 +32,19 @@ class InstagramCookiesStatus(MealieModel):
 @controller(router)
 class AdminDebugController(BaseAdminController):
     @staticmethod
+    def _is_instagram_cookie_domain(domain: str) -> bool:
+        normalized_domain = domain.strip().lower().lstrip(".")
+        return normalized_domain == "instagram.com" or normalized_domain.endswith(".instagram.com")
+
+    @staticmethod
     def _inspect_cookie_text(text: str) -> tuple[bool, bool]:
         cookie_lines = [
             line for line in text.splitlines() if line and not line.startswith("#") and len(line.split("\t")) >= 7
         ]
         valid_netscape = bool(cookie_lines) or text.startswith("# Netscape HTTP Cookie File")
-        has_instagram_cookies = any("instagram.com" in line.lower() for line in cookie_lines)
+        has_instagram_cookies = any(
+            AdminDebugController._is_instagram_cookie_domain(line.split("\t", 1)[0]) for line in cookie_lines
+        )
         return valid_netscape, has_instagram_cookies
 
     def _instagram_cookies_path(self) -> Path | None:
