@@ -39,9 +39,7 @@ class AdminDebugController(BaseAdminController):
     @staticmethod
     def _inspect_cookie_text(text: str, base_domain: str = "instagram.com") -> tuple[bool, bool]:
         cookie_lines = [
-            line
-            for line in text.splitlines()
-            if line and not line.startswith("#") and len(line.split("\t")) >= 7
+            line for line in text.splitlines() if line and not line.startswith("#") and len(line.split("\t")) >= 7
         ]
         valid_netscape = bool(cookie_lines) or text.startswith("# Netscape HTTP Cookie File")
         has_platform_cookies = any(
@@ -156,9 +154,7 @@ class AdminDebugController(BaseAdminController):
 
     @router.post("/youtube-cookies", response_model=SocialCookiesStatus)
     async def upload_youtube_cookies(self, cookies: UploadFile = File(...)):
-        return await self._upload_cookies(
-            cookies, self._youtube_cookies_path(), "YOUTUBE_COOKIES_FILE", "youtube.com"
-        )
+        return await self._upload_cookies(cookies, self._youtube_cookies_path(), "YOUTUBE_COOKIES_FILE", "youtube.com")
 
     @router.post("/openai/{provider_id}", response_model=DebugResponse)
     async def debug_openai(self, provider_id: UUID4, image: UploadFile | None = File(None)):
