@@ -112,7 +112,7 @@ const developerLinks: SidebarLinks = [
       {
         icon: $globals.icons.import,
         to: "/admin/debug/instagram",
-        title: "Instagram Cookies",
+        title: "Social Media Cookies",
         restricted: true,
       },
     ],

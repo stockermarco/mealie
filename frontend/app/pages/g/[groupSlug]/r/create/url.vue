@@ -103,13 +103,33 @@
 
         <div class="force-url-white">
           <template v-if="state.errorMessage === 'SOCIAL_MEDIA_IMPORT_UNAVAILABLE'">
-            <p>
-              Instagram konnte nicht importiert werden. Die Cookies fehlen, sind abgelaufen, rate-limitiert oder der Inhalt ist nicht zugänglich.
-            </p>
-            <br>
-            <p>
-              Lade im Adminbereich eine aktuelle Netscape cookies.txt hoch und versuche den Import danach erneut.
-            </p>
+            <template v-if="failedImportPlatform === 'youtube'">
+              <p>
+                YouTube konnte nicht importiert werden. YouTube verlangt auf dem Server eine Bot-Bestätigung oder
+                aktuelle Cookies.
+              </p>
+              <br>
+              <p>
+                Lade im Adminbereich eine aktuelle YouTube Netscape cookies.txt hoch und versuche den Import danach
+                erneut.
+              </p>
+            </template>
+            <template v-else-if="failedImportPlatform === 'instagram'">
+              <p>
+                Instagram konnte nicht importiert werden. Die Cookies fehlen, sind abgelaufen, rate-limitiert oder der
+                Inhalt ist nicht zugänglich.
+              </p>
+              <br>
+              <p>
+                Lade im Adminbereich eine aktuelle Netscape cookies.txt hoch und versuche den Import danach erneut.
+              </p>
+            </template>
+            <template v-else>
+              <p>
+                Dieser Social-Media-Link konnte nicht importiert werden. Die Plattform blockiert den Zugriff oder liefert
+                nicht genug brauchbare Rezeptdaten.
+              </p>
+            </template>
           </template>
           <template v-else>
             <p>
@@ -233,6 +253,17 @@ const recipeUrl = computed({
     }
     return null;
   },
+});
+
+const failedImportPlatform = computed(() => {
+  if (!recipeUrl.value) return "social";
+  try {
+    const hostname = new URL(recipeUrl.value).hostname.toLowerCase().replace(/^www\./, "");
+    if (hostname === "youtu.be" || hostname.endsWith("youtube.com")) return "youtube";
+    if (hostname.endsWith("instagram.com")) return "instagram";
+  }
+  catch { /* ignore */ }
+  return "social";
 });
 
 onMounted(() => {

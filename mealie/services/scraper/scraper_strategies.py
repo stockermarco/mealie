@@ -572,6 +572,14 @@ class RecipeScraperOpenAITranscription(ABCScraperStrategy):
         hostname = hostname.lower().removeprefix("www.")
         return ABCScraperStrategy._host_matches(hostname, "instagram.com")
 
+    @staticmethod
+    def is_youtube_url(url: str) -> bool:
+        hostname = urlparse(url).hostname or ""
+        hostname = hostname.lower().removeprefix("www.")
+        return ABCScraperStrategy._host_matches(hostname, "youtube.com") or ABCScraperStrategy._host_matches(
+            hostname, "youtu.be"
+        )
+
     def can_scrape(self) -> bool:
         if not self.url:
             return False
@@ -622,6 +630,8 @@ class RecipeScraperOpenAITranscription(ABCScraperStrategy):
         settings = get_app_settings()
         if self.is_instagram_url(self.url) and settings.INSTAGRAM_COOKIES_FILE:
             ydl_opts["cookiefile"] = settings.INSTAGRAM_COOKIES_FILE
+        elif self.is_youtube_url(self.url) and settings.YOUTUBE_COOKIES_FILE:
+            ydl_opts["cookiefile"] = settings.YOUTUBE_COOKIES_FILE
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:

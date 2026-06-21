@@ -33,37 +33,47 @@ def fake_youtube_dl(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.mark.parametrize(
-    ("url", "uses_cookies"),
+    ("url", "expected_cookiefile"),
     [
-        ("https://www.instagram.com/reel/abc123/", True),
-        ("https://instagram.com/reels/abc123/", True),
-        ("https://www.youtube.com/watch?v=abc123", False),
+        ("https://www.instagram.com/reel/abc123/", "instagram"),
+        ("https://instagram.com/reels/abc123/", "instagram"),
+        ("https://www.youtube.com/watch?v=abc123", "youtube"),
+        ("https://youtu.be/abc123", "youtube"),
+        ("https://www.example.com/video/abc123", None),
     ],
 )
-def test_instagram_cookies_file_is_only_passed_to_instagram_urls(
-    monkeypatch: pytest.MonkeyPatch, tmp_path, url, uses_cookies
+def test_social_cookie_file_is_passed_to_matching_platform(
+    monkeypatch: pytest.MonkeyPatch, tmp_path, url, expected_cookiefile
 ):
-    cookies_file = tmp_path / "instagram.cookies.txt"
-    cookies_file.write_text("# Netscape HTTP Cookie File\n")
+    instagram_cookies_file = tmp_path / "instagram.cookies.txt"
+    youtube_cookies_file = tmp_path / "youtube.cookies.txt"
+    instagram_cookies_file.write_text("# Netscape HTTP Cookie File\n")
+    youtube_cookies_file.write_text("# Netscape HTTP Cookie File\n")
     monkeypatch.setattr(
         scraper_strategies,
         "get_app_settings",
-        lambda: SimpleNamespace(INSTAGRAM_COOKIES_FILE=str(cookies_file)),
+        lambda: SimpleNamespace(
+            INSTAGRAM_COOKIES_FILE=str(instagram_cookies_file),
+            YOUTUBE_COOKIES_FILE=str(youtube_cookies_file),
+        ),
     )
 
     scraper(url)._download_audio(tmp_path)
 
     opts = FakeYoutubeDL.captured_opts[-1]
-    assert ("cookiefile" in opts) is uses_cookies
-    if uses_cookies:
-        assert opts["cookiefile"] == str(cookies_file)
+    if expected_cookiefile == "instagram":
+        assert opts["cookiefile"] == str(instagram_cookies_file)
+    elif expected_cookiefile == "youtube":
+        assert opts["cookiefile"] == str(youtube_cookies_file)
+    else:
+        assert "cookiefile" not in opts
 
 
-def test_empty_instagram_cookies_file_setting_is_ignored(monkeypatch: pytest.MonkeyPatch, tmp_path):
+def test_empty_social_cookies_file_settings_are_ignored(monkeypatch: pytest.MonkeyPatch, tmp_path):
     monkeypatch.setattr(
         scraper_strategies,
         "get_app_settings",
-        lambda: SimpleNamespace(INSTAGRAM_COOKIES_FILE=None),
+        lambda: SimpleNamespace(INSTAGRAM_COOKIES_FILE=None, YOUTUBE_COOKIES_FILE=None),
     )
 
     scraper("https://www.instagram.com/reel/abc123/")._download_audio(tmp_path)

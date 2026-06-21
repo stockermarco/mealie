@@ -15,57 +15,61 @@ from mealie.services.openai import OpenAILocalImage, OpenAIService
 
 router = APIRouter(prefix="/debug")
 
-MAX_INSTAGRAM_COOKIES_BYTES = 200_000
+MAX_SOCIAL_COOKIES_BYTES = 200_000
 
 
-class InstagramCookiesStatus(MealieModel):
+class SocialCookiesStatus(MealieModel):
     configured: bool
     exists: bool
     writable: bool
     size: int | None = None
     updated_at: datetime.datetime | None = None
     valid_netscape: bool = False
-    has_instagram_cookies: bool = False
+    has_platform_cookies: bool = False
     message: str | None = None
 
 
 @controller(router)
 class AdminDebugController(BaseAdminController):
     @staticmethod
-    def _is_instagram_cookie_domain(domain: str) -> bool:
+    def _is_cookie_domain(domain: str, base_domain: str) -> bool:
         normalized_domain = domain.strip().lower().lstrip(".")
-        return normalized_domain == "instagram.com" or normalized_domain.endswith(".instagram.com")
+        return normalized_domain == base_domain or normalized_domain.endswith(f".{base_domain}")
 
     @staticmethod
-    def _inspect_cookie_text(text: str) -> tuple[bool, bool]:
+    def _inspect_cookie_text(text: str, base_domain: str = "instagram.com") -> tuple[bool, bool]:
         cookie_lines = [
             line for line in text.splitlines() if line and not line.startswith("#") and len(line.split("\t")) >= 7
         ]
         valid_netscape = bool(cookie_lines) or text.startswith("# Netscape HTTP Cookie File")
-        has_instagram_cookies = any(
-            AdminDebugController._is_instagram_cookie_domain(line.split("\t", 1)[0]) for line in cookie_lines
+        has_platform_cookies = any(
+            AdminDebugController._is_cookie_domain(line.split("\t", 1)[0], base_domain) for line in cookie_lines
         )
-        return valid_netscape, has_instagram_cookies
+        return valid_netscape, has_platform_cookies
 
     def _instagram_cookies_path(self) -> Path | None:
         if not self.settings.INSTAGRAM_COOKIES_FILE:
             return None
         return Path(self.settings.INSTAGRAM_COOKIES_FILE)
 
-    def _instagram_cookies_status(self) -> InstagramCookiesStatus:
-        cookies_path = self._instagram_cookies_path()
+    def _youtube_cookies_path(self) -> Path | None:
+        if not self.settings.YOUTUBE_COOKIES_FILE:
+            return None
+        return Path(self.settings.YOUTUBE_COOKIES_FILE)
+
+    def _cookies_status(self, cookies_path: Path | None, setting_name: str, base_domain: str) -> SocialCookiesStatus:
         if not cookies_path:
-            return InstagramCookiesStatus(
+            return SocialCookiesStatus(
                 configured=False,
                 exists=False,
                 writable=False,
-                message="INSTAGRAM_COOKIES_FILE is not configured.",
+                message=f"{setting_name} is not configured.",
             )
 
         exists = cookies_path.exists()
         writable = os.access(cookies_path if exists else cookies_path.parent, os.W_OK)
         if not exists:
-            return InstagramCookiesStatus(
+            return SocialCookiesStatus(
                 configured=True,
                 exists=False,
                 writable=writable,
@@ -74,34 +78,40 @@ class AdminDebugController(BaseAdminController):
 
         stat = cookies_path.stat()
         with cookies_path.open("r", encoding="utf-8", errors="replace") as f:
-            text = f.read(MAX_INSTAGRAM_COOKIES_BYTES)
+            text = f.read(MAX_SOCIAL_COOKIES_BYTES)
 
-        valid_netscape, has_instagram_cookies = self._inspect_cookie_text(text)
-        return InstagramCookiesStatus(
+        valid_netscape, has_platform_cookies = self._inspect_cookie_text(text, base_domain)
+        return SocialCookiesStatus(
             configured=True,
             exists=True,
             writable=writable,
             size=stat.st_size,
             updated_at=datetime.datetime.fromtimestamp(stat.st_mtime, tz=datetime.UTC),
             valid_netscape=valid_netscape,
-            has_instagram_cookies=has_instagram_cookies,
+            has_platform_cookies=has_platform_cookies,
             message=(
-                "Cookie file is ready." if valid_netscape and has_instagram_cookies else "Cookie file looks invalid."
+                "Cookie file is ready." if valid_netscape and has_platform_cookies else "Cookie file looks invalid."
             ),
         )
 
-    @router.get("/instagram-cookies", response_model=InstagramCookiesStatus)
-    def get_instagram_cookies_status(self):
-        return self._instagram_cookies_status()
+    def _instagram_cookies_status(self) -> SocialCookiesStatus:
+        return self._cookies_status(self._instagram_cookies_path(), "INSTAGRAM_COOKIES_FILE", "instagram.com")
 
-    @router.post("/instagram-cookies", response_model=InstagramCookiesStatus)
-    async def upload_instagram_cookies(self, cookies: UploadFile = File(...)):
-        cookies_path = self._instagram_cookies_path()
+    def _youtube_cookies_status(self) -> SocialCookiesStatus:
+        return self._cookies_status(self._youtube_cookies_path(), "YOUTUBE_COOKIES_FILE", "youtube.com")
+
+    async def _upload_cookies(
+        self,
+        cookies: UploadFile,
+        cookies_path: Path | None,
+        setting_name: str,
+        base_domain: str,
+    ) -> SocialCookiesStatus:
         if not cookies_path:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "INSTAGRAM_COOKIES_FILE is not configured")
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, f"{setting_name} is not configured")
 
-        content = await cookies.read(MAX_INSTAGRAM_COOKIES_BYTES + 1)
-        if len(content) > MAX_INSTAGRAM_COOKIES_BYTES:
+        content = await cookies.read(MAX_SOCIAL_COOKIES_BYTES + 1)
+        if len(content) > MAX_SOCIAL_COOKIES_BYTES:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Cookie file is too large")
 
         try:
@@ -109,11 +119,11 @@ class AdminDebugController(BaseAdminController):
         except UnicodeDecodeError as e:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Cookie file must be UTF-8 text") from e
 
-        valid_netscape, has_instagram_cookies = self._inspect_cookie_text(text)
-        if not (valid_netscape and has_instagram_cookies):
+        valid_netscape, has_platform_cookies = self._inspect_cookie_text(text, base_domain)
+        if not (valid_netscape and has_platform_cookies):
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST,
-                "Upload a Netscape cookies.txt file containing Instagram cookies",
+                f"Upload a Netscape cookies.txt file containing {base_domain} cookies",
             )
 
         try:
@@ -123,10 +133,28 @@ class AdminDebugController(BaseAdminController):
             os.chmod(temp_path, 0o600)
             os.replace(temp_path, cookies_path)
         except OSError as e:
-            self.logger.exception("Failed to write Instagram cookies file")
+            self.logger.exception("Failed to write social media cookies file")
             raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Failed to write cookie file") from e
 
+        return self._cookies_status(cookies_path, setting_name, base_domain)
+
+    @router.get("/instagram-cookies", response_model=SocialCookiesStatus)
+    def get_instagram_cookies_status(self):
         return self._instagram_cookies_status()
+
+    @router.post("/instagram-cookies", response_model=SocialCookiesStatus)
+    async def upload_instagram_cookies(self, cookies: UploadFile = File(...)):
+        return await self._upload_cookies(
+            cookies, self._instagram_cookies_path(), "INSTAGRAM_COOKIES_FILE", "instagram.com"
+        )
+
+    @router.get("/youtube-cookies", response_model=SocialCookiesStatus)
+    def get_youtube_cookies_status(self):
+        return self._youtube_cookies_status()
+
+    @router.post("/youtube-cookies", response_model=SocialCookiesStatus)
+    async def upload_youtube_cookies(self, cookies: UploadFile = File(...)):
+        return await self._upload_cookies(cookies, self._youtube_cookies_path(), "YOUTUBE_COOKIES_FILE", "youtube.com")
 
     @router.post("/openai/{provider_id}", response_model=DebugResponse)
     async def debug_openai(self, provider_id: UUID4, image: UploadFile | None = File(None)):

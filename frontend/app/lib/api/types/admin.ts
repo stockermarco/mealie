@@ -110,16 +110,17 @@ export interface DebugResponse {
   success: boolean;
   response?: string | null;
 }
-export interface InstagramCookiesStatus {
+export interface SocialCookiesStatus {
   configured: boolean;
   exists: boolean;
   writable: boolean;
   size?: number | null;
   updatedAt?: string | null;
   validNetscape: boolean;
-  hasInstagramCookies: boolean;
+  hasPlatformCookies: boolean;
   message?: string | null;
 }
+export type InstagramCookiesStatus = SocialCookiesStatus;
 export interface EmailReady {
   ready: boolean;
 }
