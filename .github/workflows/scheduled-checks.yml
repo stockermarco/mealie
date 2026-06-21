@@ -8,6 +8,7 @@ on:
 jobs:
   update:
     runs-on: ubuntu-latest
+    if: github.repository == 'mealie-recipes/mealie' || vars.ENABLE_UPSTREAM_AUTOMATION == 'true'
     permissions:
       contents: write
       pull-requests: write
